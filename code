@@ -1,0 +1,110 @@
+% VESICLE TRACKING GUI FOR MULTI-FRAME TIFF IMAGES
+% Author: Muralidharan Mani
+% Description: This script provides a GUI for tracking vesicles in
+%              multi-frame TIFF images, allowing users to load images,
+%              select regions of interest (ROIs), process the images,
+%              and visualize vesicle intensities over time.
+%
+% License: MIT License
+function vesicleTrackingGUI_TIFF()
+    % GUI for vesicle tracking in multi-frame TIFF images
+    hFig = figure('Name', 'Vesicle Tracking (TIFF)', ...
+        'NumberTitle', 'off', 'Position', [100, 100, 900, 700]);
+
+    % UI Controls
+    uicontrol('Style', 'pushbutton', 'String', 'Load TIFF', ...
+        'Position', [30, 640, 120, 30], 'Callback', @loadTIFFCallback);
+
+    uicontrol('Style', 'pushbutton', 'String', 'Select ROI', ...
+        'Position', [170, 640, 120, 30], 'Callback', @selectROICallback);
+
+    uicontrol('Style', 'pushbutton', 'String', 'Process', ...
+        'Position', [310, 640, 120, 30], 'Callback', @processCallback);
+
+    % Axes to display images
+    hAxes = axes('Parent', hFig, 'Position', [0.1, 0.1, 0.8, 0.5]);
+
+    % Data containers
+    imageStack = [];
+    ROI = [];
+    intensityData = [];
+
+    function loadTIFFCallback(~, ~)
+        [fileName, pathName] = uigetfile({'*.tif;*.tiff', 'TIFF Files (*.tif, *.tiff)'});
+        if isequal(fileName, 0)
+            disp('User cancelled TIFF selection.');
+            return;
+        end
+        filePath = fullfile(pathName, fileName);
+        info = imfinfo(filePath);
+        numFrames = numel(info);
+        imageStack = zeros(info(1).Height, info(1).Width, numFrames, 'uint16');
+        for k = 1:numFrames
+            imageStack(:, :, k) = imread(filePath, k);
+        end
+        imshow(imageStack(:, :, 1), [], 'Parent', hAxes);
+        title(hAxes, 'First frame loaded');
+        disp(['Loaded TIFF with ', num2str(numFrames), ' frames.']);
+    end
+
+    function selectROICallback(~, ~)
+        if isempty(imageStack)
+            errordlg('Please load a TIFF file first.');
+            return;
+        end
+        imshow(imageStack(:, :, 1), [], 'Parent', hAxes);
+        title(hAxes, 'Draw ROI around vesicle region');
+        ROI = drawpolygon(hAxes);
+        wait(ROI);
+        disp('ROI selected.');
+    end
+
+    function processCallback(~, ~)
+        if isempty(imageStack)
+            errordlg('Please load a TIFF file first.');
+            return;
+        end
+        if isempty(ROI)
+            errordlg('Please select an ROI first.');
+            return;
+        end
+
+        numFrames = size(imageStack, 3);
+        intensityData = zeros(numFrames, 1);
+        mask = createMask(ROI, imageStack(:, :, 1));
+
+        for i = 1:numFrames
+            frame = imageStack(:, :, i);
+            maskedFrame = frame;
+            maskedFrame(~mask) = 0;
+
+            % Thresholding
+            bw = imbinarize(mat2gray(maskedFrame));
+            stats = regionprops(bw, 'Centroid', 'Area');
+
+            vesicleIntensities = zeros(length(stats), 1);
+            for j = 1:length(stats)
+                vesicleRegion = bwselect(bw, stats(j).Centroid(1), stats(j).Centroid(2));
+                vesicleIntensities(j) = mean(double(frame(vesicleRegion)));
+            end
+
+            intensityData(i) = max(vesicleIntensities);
+            imshow(frame, [], 'Parent', hAxes);
+            title(hAxes, sprintf('Processing Frame %d of %d', i, numFrames));
+            drawnow;
+        end
+
+        % Plot and save
+        fig = figure;
+        plot(intensityData, 'b', 'LineWidth', 1.5);
+        xlabel('Frame Number');
+        ylabel('Max Vesicle Intensity');
+        title('Vesicle Intensity Over Time');
+        grid on;
+        hold on;
+        significantChanges = find(diff(intensityData) >= 4);
+        plot(significantChanges, intensityData(significantChanges), 'ro');
+        saveas(fig, 'vesicle_intensity_tiff_plot.png');
+        disp('Plot saved as vesicle_intensity_tiff_plot.png');
+    end
+end
